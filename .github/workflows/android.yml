@@ -29,18 +29,16 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Prepare Android SDK
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+
+      - name: Install Android packages
         shell: bash
         run: |
-          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-
-          yes | sdkmanager --licenses > /dev/null || true
-
-          sdkmanager \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+          set -e
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Create Android project
         shell: bash
@@ -67,7 +65,7 @@ jobs:
               }
           }
 
-          rootProject.name = "SkeletonRig"
+          rootProject.name = 'SkeletonRig'
           include ':app'
           EOF
 
@@ -78,7 +76,7 @@ jobs:
           EOF
 
           cat > android/gradle.properties <<'EOF'
-          org.gradle.jvmargs=-Xmx2048m
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
           android.useAndroidX=true
           android.enableJetifier=true
           EOF
@@ -114,25 +112,28 @@ jobs:
           cat > android/app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission
+                  android:name="android.permission.INTERNET" />
 
               <application
                   android:label="Skeleton Rig"
                   android:theme="@android:style/Theme.Material.Light.NoActionBar"
-                  android:usesCleartextTraffic="true">
+                  android:usesCleartextTraffic="true"
+                  android:hardwareAccelerated="true">
 
                   <activity
                       android:name=".MainActivity"
                       android:exported="true">
 
                       <intent-filter>
-                          <action android:name="android.intent.action.MAIN"/>
-                          <category android:name="android.intent.category.LAUNCHER"/>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
 
                   </activity>
 
               </application>
+
           </manifest>
           EOF
 
@@ -142,21 +143,22 @@ jobs:
           import android.app.Activity;
           import android.os.Bundle;
           import android.content.Intent;
+          import android.net.Uri;
           import android.webkit.WebView;
           import android.webkit.WebChromeClient;
-          import android.webkit.ValueCallback;
           import android.webkit.WebSettings;
+          import android.webkit.ValueCallback;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebResourceResponse;
 
           import androidx.webkit.WebViewAssetLoader;
           import androidx.webkit.WebViewClientCompat;
 
-          import android.webkit.WebResourceRequest;
-          import android.webkit.WebResourceResponse;
-
           public class MainActivity extends Activity {
 
               private WebView webView;
-              private ValueCallback<android.net.Uri[]> fileCallback;
+
+              private ValueCallback<Uri[]> fileCallback;
 
               private static final int FILE_REQUEST = 100;
 
@@ -165,6 +167,7 @@ jobs:
                   super.onCreate(state);
 
                   webView = new WebView(this);
+
                   setContentView(webView);
 
                   WebSettings settings = webView.getSettings();
@@ -173,6 +176,8 @@ jobs:
                   settings.setDomStorageEnabled(true);
                   settings.setAllowFileAccess(true);
                   settings.setAllowContentAccess(true);
+                  settings.setBuiltInZoomControls(true);
+                  settings.setDisplayZoomControls(false);
 
                   WebViewAssetLoader loader =
                       new WebViewAssetLoader.Builder()
@@ -182,44 +187,53 @@ jobs:
                           )
                           .build();
 
-                  webView.setWebViewClient(new WebViewClientCompat() {
-                      @Override
-                      public WebResourceResponse shouldInterceptRequest(
-                          WebView view,
-                          WebResourceRequest request
-                      ) {
-                          return loader.shouldInterceptRequest(
-                              request.getUrl()
-                          );
-                      }
-                  });
+                  webView.setWebViewClient(
+                      new WebViewClientCompat() {
 
-                  webView.setWebChromeClient(new WebChromeClient() {
-
-                      @Override
-                      public boolean onShowFileChooser(
-                          WebView view,
-                          ValueCallback<android.net.Uri[]> callback,
-                          FileChooserParams params
-                      ) {
-                          fileCallback = callback;
-
-                          try {
-                              Intent intent = params.createIntent();
-
-                              startActivityForResult(
-                                  intent,
-                                  FILE_REQUEST
+                          @Override
+                          public WebResourceResponse shouldInterceptRequest(
+                              WebView view,
+                              WebResourceRequest request
+                          ) {
+                              return loader.shouldInterceptRequest(
+                                  request.getUrl()
                               );
-
-                              return true;
-
-                          } catch (Exception e) {
-                              fileCallback = null;
-                              return false;
                           }
                       }
-                  });
+                  );
+
+                  webView.setWebChromeClient(
+                      new WebChromeClient() {
+
+                          @Override
+                          public boolean onShowFileChooser(
+                              WebView view,
+                              ValueCallback<Uri[]> callback,
+                              FileChooserParams params
+                          ) {
+                              if (fileCallback != null) {
+                                  fileCallback.onReceiveValue(null);
+                              }
+
+                              fileCallback = callback;
+
+                              try {
+                                  Intent intent = params.createIntent();
+
+                                  startActivityForResult(
+                                      intent,
+                                      FILE_REQUEST
+                                  );
+
+                                  return true;
+
+                              } catch (Exception e) {
+                                  fileCallback = null;
+                                  return false;
+                              }
+                          }
+                      }
+                  );
 
                   webView.loadUrl(
                       "https://appassets.androidplatform.net/assets/index.html"
@@ -234,7 +248,10 @@ jobs:
               ) {
                   super.onActivityResult(request, result, data);
 
-                  if (request == FILE_REQUEST && fileCallback != null) {
+                  if (
+                      request == FILE_REQUEST
+                      && fileCallback != null
+                  ) {
                       fileCallback.onReceiveValue(
                           WebChromeClient.FileChooserParams.parseResult(
                               result,
@@ -262,35 +279,30 @@ jobs:
         run: |
           set -e
 
+          echo "Copying Skeleton Rig files..."
+
+          test -f index.html
+
           mkdir -p android/app/src/main/assets
-
-          if [ -f index.html ]; then
-            SOURCE_DIR="."
-          elif [ -f docs/index.html ]; then
-            SOURCE_DIR="docs"
-          elif [ -f public/index.html ]; then
-            SOURCE_DIR="public"
-          elif [ -f dist/index.html ]; then
-            SOURCE_DIR="dist"
-          else
-            echo "ERROR: No se encontro index.html"
-            exit 1
-          fi
-
-          echo "Web source: $SOURCE_DIR"
 
           rsync -a \
             --exclude='.git' \
             --exclude='.github' \
             --exclude='android' \
             --exclude='node_modules' \
-            "$SOURCE_DIR/" android/app/src/main/assets/
+            --exclude='screenshots' \
+            ./ android/app/src/main/assets/
+
+          echo "Checking index.html..."
 
           test -f android/app/src/main/assets/index.html
+
+          echo "Files copied successfully!"
 
       - name: Build debug APK
         shell: bash
         run: |
+          set -e
           gradle -p android --no-daemon :app:assembleDebug
 
       - name: Upload APK
